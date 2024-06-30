@@ -1,0 +1,89 @@
+version: "3.8"
+services:
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    networks:
+      gluetunet:
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Amsterdam
+      - FIREWALL_OUTBOUND_SUBNETS=172.18.0.0/16
+      - DNS_KEEP_NAMESERVER=on
+      - DOT=off
+      # Add specific config here
+    volumes:
+      - ${PWD}/gluetun:/gluetun
+    restart: unless-stopped
+
+  rclone:
+    image: rclone_rd
+    container_name: rclone
+    user: "${UID}:${GID}"
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse:/dev/fuse
+    security_opt:
+      - apparmor:unconfined
+    network_mode: "service:gluetun"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Amsterdam
+    volumes:
+      - /etc/passwd:/etc/passwd:ro
+      - /etc/group:/etc/group:ro
+      - ${PWD}/rclone/config:/config/rclone
+      - ${PWD}/rclone/cache:/cache
+      - ${PWD}/data:/data:rshared
+    # Customize mount flags here if needed
+    command: "mount rd: /data --log-level=INFO --vfs-cache-mode full --dir-cache-time 10s --vfs-cache-max-size 30G --cache-dir=/cache --allow-other --allow-non-empty"
+    restart: unless-stopped
+
+  plex:
+    image: lscr.io/linuxserver/plex:latest
+    container_name: plex
+    networks:
+      gluetunet:
+        ipv4_address: 172.18.0.22
+    ports:
+      - 32400:32400
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Amsterdam
+      - VERSION=docker
+    volumes:
+      - ${PWD}/plex/config:/config
+      - ${PWD}/data:/data:rshared
+    restart: unless-stopped
+    depends_on:
+      - rclone
+
+  plex_debrid:
+    image: itstoggle/plex_debrid
+    container_name: plex_debrid
+    network_mode: "service:gluetun"
+    stdin_open: true
+    tty: true
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Amsterdam
+    volumes:
+      - ${PWD}/plex_debrid/config/settings.json:/settings.json
+    depends_on:
+      - plex
+    restart: unless-stopped
+
+networks:
+  gluetunet:
+    ipam:
+      config:
+        - subnet: 172.18.0.0/16
